@@ -2,6 +2,7 @@ package com.mygame.game_client;
 
 
 import com.esotericsoftware.kryonet.Client;
+import com.mygame.game_client.items.Arrow;
 import com.mygame.game_client.packets.*;
 import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryonet.Listener;
@@ -52,6 +53,8 @@ public class GameClient {
         kryo.register(GamePoint.class);
         kryo.register(ArrayList.class);
         kryo.register(ChopTreeCommand.class);
+        kryo.register(Arrow.class);
+        kryo.register(ArrowFiredCommand.class);
     }
 
     public void start() throws IOException {
@@ -84,6 +87,9 @@ public class GameClient {
         gameWindow.setChopSender((x, y) -> {
             ChopTreeCommand chop = new ChopTreeCommand(x, y);
             client.sendTCP(chop);
+        });
+        gameWindow.setArrowSender((x, y, tx, ty) -> {
+            client.sendTCP(new ArrowFiredCommand(x, y, tx, ty));
         });
         SwingUtilities.invokeLater(() -> gameWindow.setVisible(true));
     }

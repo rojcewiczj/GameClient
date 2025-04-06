@@ -1,12 +1,14 @@
 package com.mygame.game_client;
 
+import com.esotericsoftware.kryonet.Client;
+import com.mygame.game_client.entites.ArrowEntity;
+import com.mygame.game_client.packets.ArrowFiredCommand;
 import com.mygame.game_client.packets.GamePoint;
 import com.mygame.game_client.packets.PlayerSnapshot;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
+import java.awt.event.*;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -23,11 +25,12 @@ public class GameWindow extends JFrame {
     private final GamePanel gamePanel;
     private MoveSender moveSender;
     private ChopSender chopSender;
-
+    private ArrowSender arrowSender;
     private final List<PlayerSnapshot> otherPlayers = new CopyOnWriteArrayList<>();
     private final List<GamePoint> visibleTrees = new CopyOnWriteArrayList<>();
     private final Player localPlayer = new Player(100,100); // or however you instantiate it
     private int localPlayerId = -1;
+    private final List<ArrowEntity> arrows = new CopyOnWriteArrayList<>();
     public interface MoveSender {
         void sendMove(float x, float y);
     }
@@ -37,6 +40,12 @@ public class GameWindow extends JFrame {
 
     public interface ChopSender {
         void sendChop(int x, int y);
+    }
+    public interface ArrowSender {
+        void sendArrow(float x, float y, float tx, float ty);
+    }
+    public void setArrowSender(ArrowSender sender) {
+        this.arrowSender = sender;
     }
     public GameWindow() {
 
@@ -55,6 +64,28 @@ public class GameWindow extends JFrame {
                 int worldX = e.getX() + (int) localPlayer.x - getWidth() / 2;
                 int worldY = e.getY() + (int) localPlayer.y - getHeight() / 2;
 
+                if (localPlayer.shootingMode) {
+                    if (localPlayer.hasArrow()) {
+                        localPlayer.removeOneArrow();
+
+                        float startX = localPlayer.x;
+                        float startY = localPlayer.y;
+                        float targetX = worldX;
+                        float targetY = worldY;
+
+                        ArrowEntity arrow = new ArrowEntity(startX, startY, targetX, targetY);
+                        arrows.add(arrow);
+
+                        if (arrowSender != null) {
+                            arrowSender.sendArrow(startX, startY, targetX, targetY);
+                        }
+
+                        System.out.println("🏹 Arrow fired at " + targetX + ", " + targetY);
+                    } else {
+                        System.out.println("❌ No arrows!");
+                    }
+                    return;
+                }
                 // 1. Try to chop a tree
                 for (GamePoint tree : visibleTrees) {
                     double dx = tree.x - worldX;
@@ -77,11 +108,27 @@ public class GameWindow extends JFrame {
                 localPlayer.targetY = worldY;
             }
         });
-
+        addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_1) {
+                    Player player = getPlayer();
+                    if (player.hasBow()) {
+                        player.shootingMode = !player.shootingMode;
+                        System.out.println(player.shootingMode ? "🎯 Shooting mode ON" : "🛑 Shooting mode OFF");
+                    }
+                }
+            }
+        });
+        setFocusable(true); // 🔑 needed to receive keyboard input
         // Refresh display ~60 FPS
         Timer timer = new Timer(16, e -> {
+            for (ArrowEntity arrow : arrows) {
+                arrow.update();
+            }
             localPlayer.update(); // Smooth motion
             gamePanel.repaint();  // Redraw the screen
+
         });
         timer.start();
     }
@@ -153,6 +200,12 @@ public class GameWindow extends JFrame {
                 int px = (int) p.x - camX;
                 int py = (int) p.y - camY;
                 g2.fillOval(px - 10, py - 10, 20, 20);
+            }
+            g2.setColor(Color.YELLOW);
+            for (ArrowEntity arrow : arrows) {
+                int sx = (int) arrow.x - camX;
+                int sy = (int) arrow.y - camY;
+                g2.fillOval(sx - 2, sy - 2, 5, 5); // small circle for arrow
             }
 
             // Step 5. Draw Local Player centered on screen
