@@ -22,6 +22,10 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class GameWindow extends JFrame {
+    private boolean isDragging = false;
+    private Point dragStart = null;
+    private Point dragEnd = null;
+    private Set<Integer> selectedNpcIds = new HashSet<>();
     private float prevCamX = 0;
     private float prevCamY = 0;
     private float camXf = 0;
@@ -76,6 +80,11 @@ public class GameWindow extends JFrame {
     public interface ArrowSender {
         void sendArrow(float x, float y, float tx, float ty);
     }
+    private boolean isClick(Point p1, Point p2) {
+        int dx = Math.abs(p1.x - p2.x);
+        int dy = Math.abs(p1.y - p2.y);
+        return dx < 10 && dy < 10; // You can adjust this pixel threshold if needed
+    }
     public void setArrowSender(ArrowSender sender) {
         this.arrowSender = sender;
     }
@@ -88,113 +97,142 @@ public class GameWindow extends JFrame {
 
         gamePanel = new GamePanel();
         setContentPane(gamePanel);
-        setVisible(true);
-
-        addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-
-                int worldX = e.getX() + (int) prevCamX;
-                int worldY = e.getY() + (int) prevCamY;
-
-                if (localPlayer.shootingMode) {
-                    if (localPlayer.hasArrow()) {
-                        localPlayer.removeOneArrow();
-
-                        float startX = localPlayer.x;
-                        float startY = localPlayer.y;
-                        float targetX = worldX;
-                        float targetY = worldY;
-                        float dx = targetX - startX;
-                        float dy = targetY - startY;
-                        float len = (float) Math.sqrt(dx * dx + dy * dy);
-
-                        float speed = 10f; // or whatever speed your arrows use
-                        float calcVX = dx / len * speed;
-                        float calcVY = dy / len * speed;
-                        // Create local predicted arrow
-                        ArrowVisual predicted = new ArrowVisual(startX, startY, calcVX, calcVY);
-                        arrowMap.put(tempArrowId, predicted);
-                        lastTempArrowId = tempArrowId;
-                        tempArrowId--; // for next use
-
-                        // Send real arrow to server
-                        if (arrowSender != null) {
-                            arrowSender.sendArrow(startX, startY, targetX, targetY);
-                        }
-
-                        System.out.println("🏹 Arrow fired at " + targetX + ", " + targetY);
-                    } else {
-                        System.out.println("❌ No arrows!");
-                    }
-                    return;
-                }
-                // 1. Try to chop a tree
-                for (GamePoint tree : visibleTrees) {
-                    double dx = tree.x - worldX;
-                    double dy = tree.y - worldY;
-                    double dist = Math.sqrt(dx * dx + dy * dy);
-
-                    if (dist < 30) {
-                        if (chopSender != null) {
-                            chopSender.sendChop(tree.x, tree.y);
-                            System.out.println("tried to chop tree");
-                            return; // don't move if chopping
-                        }
-                    }
-                }
-
-                for (NpcSnapshot npc : visibleNpcs) {
-                    double dx = npc.x - worldX;
-                    double dy = npc.y - worldY;
-                    if (Math.sqrt(dx * dx + dy * dy) < 20) {
-                        selectedNpcId = npc.id;
-                        return;
-                    }
-                }
-
-                if (selectedNpcId != -1) {
-                    if (npcMoveSender != null) {
-                        npcMoveSender.sendNpcMove(selectedNpcId, worldX, worldY);
-                    }
-                    selectedNpcId = -1;
-                }
-// 2. Otherwise, move
-                if (moveSender != null) {
-                    moveSender.sendMove(worldX, worldY);
-                }
-                localPlayer.targetX = worldX;
-                localPlayer.targetY = worldY;
-            }
-        });
-        addKeyListener(new KeyAdapter() {
-            @Override
-            public void keyPressed(KeyEvent e) {
-                if (e.getKeyCode() == KeyEvent.VK_1) {
-                    Player player = getPlayer();
-                    if (player.hasBow()) {
-                        player.shootingMode = !player.shootingMode;
-                        System.out.println(player.shootingMode ? "🎯 Shooting mode ON" : "🛑 Shooting mode OFF");
-                    }
-                }
-            }
-        });
-        setFocusable(true); // 🔑 needed to receive keyboard input
         // Refresh display ~60 FPS
         Timer timer = new Timer(16, e -> {
-
             for (ArrowVisual arrow : arrowMap.values()) {
                 arrow.update();
             }
-            for (PlayerSnapshot p : playerMap.values()) {
-                p.interpolate(0.15f); // adjust smoothing as needed
-            }
-            localPlayer.update(); // Smooth motion
-            gamePanel.repaint();  // Redraw the screen
 
+            for (PlayerSnapshot p : playerMap.values()) {
+                p.interpolate(0.15f); // Smooth server-side motion
+            }
+
+            // If you have client-side prediction for the local player
+            localPlayer.update();
+
+            gamePanel.repaint();  // Redraw everything
         });
         timer.start();
+        setVisible(true);
+        addMouseMotionListener(new MouseMotionAdapter() {
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                if (!isDragging) return;
+                dragEnd = e.getPoint();
+            }
+        });
+        addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                dragStart = e.getPoint();
+                dragEnd = null;
+                isDragging = true;
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                dragEnd = e.getPoint();
+                isDragging = false;
+
+                if (dragStart == null || dragEnd == null) return;
+
+                int worldX = dragEnd.x + (int) prevCamX;
+                int worldY = dragEnd.y + (int) prevCamY;
+
+                // --- 1. Check if it's a click (not a drag)
+                if (isClick(dragStart, dragEnd)) {
+
+                    // --- 1a. Try selecting a single NPC
+                    for (NpcSnapshot npc : visibleNpcs) {
+                        double dx = npc.x - worldX;
+                        double dy = npc.y - worldY;
+                        if (Math.sqrt(dx * dx + dy * dy) < 20) {
+                            selectedNpcIds.clear();
+                            selectedNpcIds.add(npc.id);
+                            System.out.println("🟢 Selected NPC ID: " + npc.id);
+                            return;
+                        }
+                    }
+
+                    // --- 1b. Try chopping
+                    for (GamePoint tree : visibleTrees) {
+                        double dx = tree.x - worldX;
+                        double dy = tree.y - worldY;
+                        if (Math.sqrt(dx * dx + dy * dy) < 30) {
+                            if (chopSender != null) {
+                                chopSender.sendChop(worldX, worldY);
+                                System.out.println("🪓 Tried to chop tree");
+                                return;
+                            }
+                        }
+                    }
+
+                    // --- 1c. Shoot
+                    if (localPlayer.shootingMode && localPlayer.hasArrow()) {
+                        localPlayer.removeOneArrow();
+                        float startX = localPlayer.x;
+                        float startY = localPlayer.y;
+                        float dx = worldX - startX;
+                        float dy = worldY - startY;
+                        float len = (float) Math.sqrt(dx * dx + dy * dy);
+                        float speed = 10f;
+                        float vx = dx / len * speed;
+                        float vy = dy / len * speed;
+
+                        ArrowVisual predicted = new ArrowVisual(startX, startY, vx, vy);
+                        arrowMap.put(tempArrowId, predicted);
+                        lastTempArrowId = tempArrowId--;
+                        if (arrowSender != null) {
+                            arrowSender.sendArrow(startX, startY, worldX, worldY);
+                        }
+                        System.out.println("🏹 Arrow fired at " + worldX + ", " + worldY);
+                        return;
+                    }
+
+                    // --- 1d. Move selected NPCs if any
+                    if (!selectedNpcIds.isEmpty()) {
+                        for (int npcId : selectedNpcIds) {
+                            if (npcMoveSender != null) {
+                                npcMoveSender.sendNpcMove(npcId, worldX, worldY);
+                            }
+                        }
+                        return;
+                    }
+
+                    // --- 1e. Move player
+                    if (moveSender != null) {
+                        moveSender.sendMove(worldX, worldY);
+                    }
+                    localPlayer.targetX = worldX;
+                    localPlayer.targetY = worldY;
+
+                } else {
+                    // --- 2. Handle drag selection
+                    Rectangle selection = new Rectangle(
+                            Math.min(dragStart.x, dragEnd.x),
+                            Math.min(dragStart.y, dragEnd.y),
+                            Math.abs(dragEnd.x - dragStart.x),
+                            Math.abs(dragEnd.y - dragStart.y)
+                    );
+
+                    selectedNpcIds.clear();
+                    for (NpcSnapshot npc : visibleNpcs) {
+                        int screenX = (int) (npc.x - (int) prevCamX);
+                        int screenY = (int) (npc.y - (int) prevCamY);
+                        if (selection.contains(screenX, screenY)) {
+                            selectedNpcIds.add(npc.id);
+                        }
+                    }
+                    System.out.println("🎯 Selected NPCs: " + selectedNpcIds);
+                }
+
+                dragStart = null;
+                dragEnd = null;
+            }
+        });
+
     }
+
     public void setVisibleNpcs(List<NpcSnapshot> npcs) {
         visibleNpcs.clear();
         visibleNpcs.addAll(npcs);
@@ -333,6 +371,25 @@ public class GameWindow extends JFrame {
                 int ax = (int) arrow.getX() - camX;
                 int ay = (int) arrow.getY() - camY;
                 g2.fillOval(ax - 2, ay - 2, 5, 5);
+            }
+            // Highlight selected NPCs
+            g2.setColor(Color.CYAN);
+            for (NpcSnapshot npc : visibleNpcs) {
+                if (selectedNpcIds.contains(npc.id)) {
+                    int x = (int) (npc.x - camX);
+                    int y = (int) (npc.y - camY);
+                    g2.drawOval(x - 12, y - 12, 24, 24);
+                }
+            }
+            // Step 6. Draw Drag-Selection Rectangle
+            if (dragStart != null && dragEnd != null) {
+                int x = Math.min(dragStart.x, dragEnd.x);
+                int y = Math.min(dragStart.y, dragEnd.y);
+                int w = Math.abs(dragEnd.x - dragStart.x);
+                int h = Math.abs(dragEnd.y - dragStart.y);
+
+                g2.setColor(Color.WHITE);
+                g2.drawRect(x, y, w, h);
             }
         }
     }

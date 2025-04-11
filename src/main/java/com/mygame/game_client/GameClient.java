@@ -101,6 +101,7 @@ public class GameClient {
         });
         gameWindow.setNpcMoveSender((id, x, y) -> {
             client.sendTCP(new MoveNPCCommand(id, x, y));
+            System.out.println("npc move comman send");
         });
         SwingUtilities.invokeLater(() -> gameWindow.setVisible(true));
     }
