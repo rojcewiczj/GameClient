@@ -23,7 +23,7 @@ public class Player {
 
         // ✅ Add starting bow and arrows for local testing
         inventory.add(new Bow());
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 100; i++) {
             inventory.add(new Arrow());
         }
     }

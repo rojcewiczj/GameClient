@@ -29,8 +29,10 @@ public class GameClient {
                 if (object instanceof WorldState state) {
                     gameWindow.updatePlayerPositions(state.players);
                 } else if (object instanceof WorldChunkUpdate update) {
-                    System.out.println("📦 Client received " + update.trees.size() + " trees");
+//                    System.out.println("📦 Client received " + update.trees.size() + " trees");
                     gameWindow.setVisibleTrees(update.trees);
+                    gameWindow.setVisibleArrows(update.arrows);
+                    gameWindow.setVisibleNpcs(update.npcs);
                 }
             }
         });
@@ -55,6 +57,10 @@ public class GameClient {
         kryo.register(ChopTreeCommand.class);
         kryo.register(Arrow.class);
         kryo.register(ArrowFiredCommand.class);
+        kryo.register(ArrowData.class);
+        kryo.register(MoveNPCCommand.class);
+        kryo.register(NpcSnapshot.class);
+
     }
 
     public void start() throws IOException {
@@ -83,6 +89,7 @@ public class GameClient {
         RegisterName register = new RegisterName();
         register.name = "Player_" + System.currentTimeMillis();
         client.sendTCP(register);
+        gameWindow.setLocalPlayerId(1);
         // ✅ Set up chop sender
         gameWindow.setChopSender((x, y) -> {
             ChopTreeCommand chop = new ChopTreeCommand(x, y);
@@ -90,6 +97,10 @@ public class GameClient {
         });
         gameWindow.setArrowSender((x, y, tx, ty) -> {
             client.sendTCP(new ArrowFiredCommand(x, y, tx, ty));
+            gameWindow.markArrowFired();
+        });
+        gameWindow.setNpcMoveSender((id, x, y) -> {
+            client.sendTCP(new MoveNPCCommand(id, x, y));
         });
         SwingUtilities.invokeLater(() -> gameWindow.setVisible(true));
     }
